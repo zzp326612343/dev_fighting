@@ -109,13 +109,73 @@ describe('MetaNodeStake', function () {
     await metaNodeStake.connect(user1).deposit(1, parseUnits("100", 18));
   
     // 用户发起 unstake 请求
-    await expect(metaNodeStake.connect(user1).unstake(0, ethers.utils.parseUnits("50", 18)))
+    await expect(metaNodeStake.connect(user1).unstake(1, parseUnits("50", 18)))
       .to.emit(metaNodeStake, "RequestUnstake")
-      .withArgs(user1.address, 0, ethers.utils.parseUnits("50", 18));
+      .withArgs(user1.address, 1, parseUnits("50", 18));
   
     // 查询用户 stakingBalance 减少
-    const balance = await metaNodeStake.stakingBalance(0, user1.address);
-    expect(balance).to.equal(ethers.utils.parseUnits("50", 18));
+    const balance = await metaNodeStake.stakingBalance(1, user1.address);
+    expect(balance).to.equal(parseUnits("50", 18));
+  });
+
+  it("user can withdraw after unstake locked blocks", async function () {
+    // 先添加池子
+    await metaNodeStake.connect(admin).addPool(ethers.ZeroAddress, 100, 100, 5, true);
+    await metaNodeStake.connect(admin).addPool(metaNodeToken.getAddress(), 100, 100, 5, true);
+    // user1 授权合约转代币
+    await metaNodeToken.connect(user1).approve(metaNodeStake.getAddress(), parseUnits("100", 18));
+  
+    // user1 存入 100 个代币
+    await metaNodeStake.connect(user1).deposit(1, parseUnits("100", 18));
+  
+    // 发起 unstake 50
+    await metaNodeStake.connect(user1).unstake(1, parseUnits("50", 18));
+  
+    // 快进区块，跳过锁定期
+    for (let i = 0; i < 6; i++) {
+      await ethers.provider.send("evm_mine");
+    }
+  
+    // 记录余额
+    const beforeBalance = await metaNodeToken.balanceOf(user1.address);
+  
+    // 提现
+    const tx = await metaNodeStake.connect(user1).withdraw(1);
+    const receipt = await tx.wait();
+    const eventBlockNumber = receipt.blockNumber;
+
+    await expect(tx)
+      .to.emit(metaNodeStake, "Withdraw")
+      .withArgs(user1.address, 1, parseUnits("50", 18), eventBlockNumber);
+  
+    // 用户代币余额增加
+    const afterBalance = await metaNodeToken.balanceOf(user1.address);
+    expect(afterBalance -beforeBalance).to.equal(parseUnits("50", 18));
   });
   
+  it("user can claim MetaNode rewards", async function () {
+    // 先添加池子
+    await metaNodeStake.connect(admin).addPool(ethers.ZeroAddress, 100, 100, 5, true);
+    await metaNodeStake.connect(admin).addPool(metaNodeToken.getAddress(), 100, 100, 5, true);
+    // user1 授权合约转代币
+    await metaNodeToken.connect(user1).approve(metaNodeStake.getAddress(), parseUnits("100", 18));
+  
+    // user1 存入 100 个代币
+    await metaNodeStake.connect(user1).deposit(1, parseUnits("100", 18));
+  
+    // 快进区块，跳过锁定期
+    for (let i = 0; i < 6; i++) {
+      await ethers.provider.send("evm_mine");
+    }
+  
+    const beforeBalance = await metaNodeToken.balanceOf(user1.address);
+  
+    // 领取奖励
+    await expect(metaNodeStake.connect(user1).claim(1))
+      .to.emit(metaNodeStake, "Claim");
+  
+    const afterBalance = await metaNodeToken.balanceOf(user1.address);
+    console.log("afterBalance: ", afterBalance);
+    expect(afterBalance).to.be.gt(beforeBalance); // 奖励到账了
+  });  
 });
